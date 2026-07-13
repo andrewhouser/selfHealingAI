@@ -1,0 +1,26 @@
+{
+  "nodes": [
+    {
+      "id": "api",
+      "project": "API_Project",
+      "consumes": "database-project/schema.json",
+      "contractPath": ["fields"],
+      "owns": ["api-project/routes/persons.js"],
+      "goal": "The Express route handlers in api-project/routes/persons.js must stay consistent with the Person data contract. The handlers return whole documents straight from the database via findAll() and findById(), so adding or removing a field usually needs no functional change. Keep any in-file documentation of the Person record's fields accurate: document newly added fields and remove references to fields that no longer exist. Make the smallest change that satisfies this; if nothing needs to change, return the file unchanged.",
+      "producer": { "module": "api-project/swagger-generator.js", "export": "generateSwagger" },
+      "produces": "api-project/swagger.json",
+      "verify": "node -e \"require('./api-project/routes/persons.js')\" && npx vitest --run api-project",
+      "maxReconcileAttempts": 2
+    },
+    {
+      "id": "ui",
+      "project": "UI_Project",
+      "consumes": "api-project/swagger.json",
+      "contractPath": ["components", "schemas", "Person", "properties"],
+      "owns": ["ui-project/app/page.tsx"],
+      "goal": "The DEFAULT_FIELDS array in ui-project/app/page.tsx must list exactly the property names of the Person schema in the OpenAPI (swagger) contract, in the same order, so the table renders one column per field. Add newly introduced fields and remove fields that no longer exist in the contract. Preserve all other code, imports, and structure. Make the smallest change that satisfies this.",
+      "verify": "npx vitest --run --config ui-project/vitest.config.ts",
+      "maxReconcileAttempts": 2
+    }
+  ]
+}

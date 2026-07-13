@@ -41,9 +41,6 @@ function createAskApproval(options = {}) {
 
 /**
  * Default askApproval function using real stdin/stdout.
- * Prompts the developer via terminal stdin to approve or reject an action.
- * Waits indefinitely for a response before resolving.
- *
  * @param {string} message - The prompt message to display to the developer
  * @returns {Promise<boolean>} Resolves with true if approved, false if rejected
  */
