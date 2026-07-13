@@ -2,10 +2,11 @@
 'use strict';
 
 /**
- * start-demo.js — Node.js orchestration script for the Agentic API Contract Demo
+ * start-demo.js — Orchestration script for the Agentic API Contract Demo
  *
- * Starts the API server, API agentic loop, and UI agentic loop as child processes.
- * Provides clean shutdown on SIGINT/SIGTERM.
+ * Starts the API agentic loop and UI agentic loop as child processes.
+ * Output is interleaved in a shared terminal with colored prefixes.
+ * Stdin is shared so approval prompts work natively.
  *
  * Usage:
  *   node scripts/start-demo.js
@@ -19,45 +20,44 @@ const ROOT_DIR = path.resolve(__dirname, '..');
 
 // ANSI color codes for terminal output
 const COLORS = {
-  'API Server': '\x1b[36m',  // Cyan
-  'API Loop':   '\x1b[33m',  // Yellow
-  'UI Loop':    '\x1b[35m',  // Magenta
+  'API Loop': '\x1b[33m',  // Yellow
+  'UI Loop':  '\x1b[35m',  // Magenta
 };
 const RESET = '\x1b[0m';
 const BOLD = '\x1b[1m';
+const DIM = '\x1b[2m';
 
 const processes = [];
 let shuttingDown = false;
 
 /**
- * Spawns a child process and tracks it for shutdown.
- * @param {string} label - Display label for logging
- * @param {string} command - Command to execute
- * @param {string[]} args - Command arguments
- * @param {Object} [options] - spawn options
- * @returns {ChildProcess}
+ * Spawns a child process with colored prefixed output.
  */
-function startProcess(label, command, args, options = {}) {
+function startProcess(label, command, args) {
   const color = COLORS[label] || '';
 
   const proc = spawn(command, args, {
     cwd: ROOT_DIR,
-    stdio: ['pipe', 'pipe', 'pipe'],
-    ...options,
+    stdio: ['inherit', 'pipe', 'pipe'],
+    env: { ...process.env, FORCE_COLOR: '1' },
   });
 
   proc.stdout.on('data', (data) => {
-    const lines = data.toString().trim().split('\n');
-    lines.forEach((line) => {
-      process.stdout.write(`${color}${BOLD}[${label}]${RESET} ${line}\n`);
-    });
+    const lines = data.toString().split('\n');
+    for (const line of lines) {
+      if (line.trim()) {
+        process.stdout.write(`${color}${BOLD}[${label}]${RESET} ${line}\n`);
+      }
+    }
   });
 
   proc.stderr.on('data', (data) => {
-    const lines = data.toString().trim().split('\n');
-    lines.forEach((line) => {
-      process.stderr.write(`${color}${BOLD}[${label}]${RESET} ${line}\n`);
-    });
+    const lines = data.toString().split('\n');
+    for (const line of lines) {
+      if (line.trim()) {
+        process.stderr.write(`${color}${BOLD}[${label}]${RESET} ${line}\n`);
+      }
+    }
   });
 
   proc.on('exit', (code, signal) => {
@@ -77,15 +77,12 @@ function shutdown() {
   if (shuttingDown) return;
   shuttingDown = true;
 
-  console.log('\nShutting down all services...');
+  console.log(`\n${DIM}Shutting down all services...${RESET}`);
 
-  processes.forEach(({ label, proc }) => {
-    if (!proc.killed) {
-      proc.kill('SIGTERM');
-    }
+  processes.forEach(({ proc }) => {
+    if (!proc.killed) proc.kill('SIGTERM');
   });
 
-  // Force kill after 5 seconds if processes haven't exited
   setTimeout(() => {
     processes.forEach(({ label, proc }) => {
       if (!proc.killed) {
@@ -96,42 +93,26 @@ function shutdown() {
     process.exit(0);
   }, 5000);
 
-  // Check if all exited naturally
-  const checkInterval = setInterval(() => {
+  const check = setInterval(() => {
     const allExited = processes.every(({ proc }) => proc.killed || proc.exitCode !== null);
     if (allExited) {
-      clearInterval(checkInterval);
-      console.log('All services stopped.');
+      clearInterval(check);
+      console.log(`${DIM}All services stopped.${RESET}`);
       process.exit(0);
     }
   }, 200);
 }
 
-// Handle shutdown signals
 process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);
 
-// --- Start services ---
+// ─── Start ───────────────────────────────────────────────────────────────────
 
-console.log('=== Agentic API Contract Demo ===\n');
-console.log('NOTE: Start the API server separately in its own terminal:');
-console.log('  node api-project/server.js\n');
+console.log(`${BOLD}=== Agentic API Contract Demo ===${RESET}\n`);
+console.log(`Cascade: database-project/schema.json → ${COLORS['API Loop']}API Loop${RESET} → api-project/swagger.json → ${COLORS['UI Loop']}UI Loop${RESET}`);
+console.log(`Trigger: node scripts/add-field.js <fieldName> [fieldType]\n`);
 
-// 1. Start API agentic loop (inherits stdin for approval prompts)
-console.log('Starting API agentic loop...');
-startProcess('API Loop', 'node', ['api-project/agentic-loop.js'], {
-  stdio: ['inherit', 'pipe', 'pipe'],
-});
+startProcess('API Loop', 'node', ['api-project/agentic-loop.js']);
+startProcess('UI Loop', 'node', ['ui-project/agentic-loop.js']);
 
-// 2. Start UI agentic loop (inherits stdin for approval prompts)
-console.log('Starting UI agentic loop...');
-startProcess('UI Loop', 'node', ['ui-project/agentic-loop.js'], {
-  stdio: ['inherit', 'pipe', 'pipe'],
-});
-
-console.log('\n=== Agentic loops running ===\n');
-console.log('Cascade flow:');
-console.log('  database-project/schema.json → API agentic loop → api-project/swagger.json → UI agentic loop\n');
-console.log('To trigger a cascade, add a field to database-project/schema.json');
-console.log('  or run: node scripts/add-field.js <fieldName> [fieldType]\n');
-console.log('Press Ctrl+C to stop all services.\n');
+console.log(`${DIM}Press Ctrl+C to stop all services.${RESET}\n`);

@@ -20,7 +20,8 @@ const { createFileWatcher } = require('./file-watcher');
 const { sendNotification } = require('./notifier');
 const { contractsEqual, diffContract, summarizeChange } = require('./contract-diff');
 const { askApproval: defaultAskApproval } = require('./approval-prompt');
-const { reconcileNode: defaultReconcileNode } = require('./reconcile');
+const { reconcileNode: defaultReconcileNode, proposeChanges: defaultProposeChanges, applyProposals: defaultApplyProposals, defaultRunVerify } = require('./reconcile');
+const { formatProposalDiff } = require('./diff-format');
 
 const POLLING_INTERVAL = 1000; // 1 second, within the 2-second max
 
@@ -74,6 +75,9 @@ function runProducer(node) {
  * @param {function} [deps.readContractFn] - (filePath) => { data, parseError }
  * @param {function} [deps.askApproval]
  * @param {function} [deps.reconcileNode]
+ * @param {function} [deps.proposeChanges]
+ * @param {function} [deps.applyProposals]
+ * @param {function} [deps.runVerify]
  * @param {function} [deps.runProducer]
  * @returns {{ stop: function(): Promise<void>, isPromptPending: function(): boolean, getCached: function(): Object }}
  */
@@ -83,6 +87,9 @@ function startNode(node, deps = {}) {
   const _readContract = deps.readContractFn || ((p) => readContract(p));
   const _askApproval = deps.askApproval || defaultAskApproval;
   const _reconcileNode = deps.reconcileNode || defaultReconcileNode;
+  const _proposeChanges = deps.proposeChanges || defaultProposeChanges;
+  const _applyProposals = deps.applyProposals || defaultApplyProposals;
+  const _runVerify = deps.runVerify || defaultRunVerify;
   const _runProducer = deps.runProducer || runProducer;
 
   let cached = _readContract(node.consumesPath).data;
@@ -144,24 +151,153 @@ function startNode(node, deps = {}) {
 
       promptPending = true;
       try {
+        const cycleStart = Date.now();
+        let attempts = 0;
+        let totalLLMChars = 0;
+
+        // Step 1: Generate proposed changes (LLM call, no disk writes)
+        console.log(`${node.project}: generating proposed changes...`);
+        let proposals;
+        try {
+          attempts = 1;
+          proposals = await _proposeChanges(node, previous || {}, cached);
+          for (const p of proposals) totalLLMChars += p.proposed.length;
+        } catch (err) {
+          console.error(`${node.project}: proposal generation failed: ${err.message}`);
+          _sendNotification({
+            title: `${node.project}: Reconcile Failed`,
+            message: `Could not generate proposal: ${err.message}`,
+            project: node.project,
+            changeType: 'contract_reconciled',
+            fieldName: summary,
+          });
+          return;
+        }
+
+        // Step 2: Check if there are actual code changes
+        const hasCodeChanges = proposals.some((p) => p.original !== p.proposed);
+
+        if (!hasCodeChanges) {
+          // No code changes, but the contract did change — inform the developer.
+          const elapsed = ((Date.now() - cycleStart) / 1000).toFixed(1);
+          console.log(`\n${node.project}: contract changed (${summary}) but no code changes needed (${elapsed}s).`);
+
+          if (node.producer) {
+            const approved = await _askApproval(
+              `${node.project}: Regenerate ${node.produces}?`
+            );
+
+            if (approved) {
+              try {
+                _runProducer(node);
+                console.log(`${node.project}: regenerated ${node.produces}.`);
+              } catch (err) {
+                _sendNotification({
+                  title: `${node.project}: Producer Failed`,
+                  message: `Regenerating ${node.produces} failed: ${err.message}`,
+                  project: node.project,
+                  changeType: 'contract_changed',
+                  fieldName: node.produces || '',
+                });
+              }
+            } else {
+              console.log(`${node.project}: skipped regeneration. Continuing to watch...`);
+            }
+          } else {
+            console.log(`${node.project}: no action required. Continuing to watch...`);
+          }
+          return;
+        }
+
+        // Step 3: Show colorized diff
+        const diffOutput = formatProposalDiff(proposals);
+        console.log(`\n${node.project}: proposed changes:\n`);
+        console.log(diffOutput);
+        console.log('');
+
+        // Step 4: Ask for approval with the diff visible
         const approved = await _askApproval(
-          `${node.project}: ${node.consumes} changed (${summary}). Reconcile owned files?`
+          `${node.project}: Apply these changes?`
         );
 
         if (!approved) {
-          console.log(`${node.project}: reconcile rejected. Continuing to watch...`);
+          console.log(`${node.project}: changes rejected. Continuing to watch...`);
           return;
         }
 
-        console.log(`${node.project}: reconcile approved. Reconciling...`);
-        const success = await _reconcileNode(node, previous || {}, cached);
+        // Step 4: Apply proposals to disk
+        _applyProposals(proposals);
+        console.log(`${node.project}: changes applied. Verifying...`);
 
-        if (!success) {
-          console.log(`${node.project}: reconcile failed and was reverted.`);
+        // Step 5: Run verification
+        const maxAttempts = node.maxReconcileAttempts || 2;
+        let verified = false;
+        let verifyError = '';
+        let verifyDuration = 0;
+
+        for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+          const verifyStart = Date.now();
+          const result = await _runVerify(node.verify);
+          verifyDuration += Date.now() - verifyStart;
+
+          if (result.success) {
+            verified = true;
+            break;
+          }
+          verifyError = result.output || '';
+          console.error(`[${node.project}] Verify failed on attempt ${attempt}:\n${verifyError.slice(0, 800)}`);
+
+          if (attempt < maxAttempts) {
+            // Re-run reconcile with error feedback (falls back to full reconcileNode)
+            console.log(`${node.project}: verification failed, retrying with feedback...`);
+            attempts++;
+            const retrySuccess = await _reconcileNode(node, previous || {}, cached);
+            if (retrySuccess) {
+              verified = true;
+              break;
+            }
+          }
+        }
+
+        if (!verified) {
+          // Revert: restore original content
+          const _fs = require('fs');
+          for (const { absPath, original } of proposals) {
+            try {
+              _fs.writeFileSync(absPath, original, 'utf-8');
+            } catch (e) { /* best effort */ }
+          }
+          const elapsed = ((Date.now() - cycleStart) / 1000).toFixed(1);
+          console.log(`${node.project}: verification failed after ${maxAttempts} attempts; reverted. (${elapsed}s total)`);
+          _sendNotification({
+            title: `${node.project}: Reconcile Failed`,
+            message: `Verification failed after ${maxAttempts} attempts; reverted.`,
+            project: node.project,
+            changeType: 'contract_reconciled',
+            fieldName: summary,
+          });
           return;
         }
 
-        console.log(`${node.project}: reconcile succeeded.`);
+        // Telemetry summary
+        const totalElapsed = ((Date.now() - cycleStart) / 1000).toFixed(1);
+        const verifyElapsed = (verifyDuration / 1000).toFixed(1);
+        const estimatedTokens = Math.round(totalLLMChars / 4); // rough char-to-token ratio
+        const tokenDisplay = estimatedTokens >= 1000
+          ? `${(estimatedTokens / 1000).toFixed(1)}k`
+          : String(estimatedTokens);
+        console.log(
+          `${node.project}: converged in ${attempts} attempt${attempts > 1 ? 's' : ''} · ${totalElapsed}s · ~${tokenDisplay} tokens · verify: ${verifyElapsed}s`
+        );
+
+        _sendNotification({
+          title: `${node.project}: Reconciled`,
+          message: `Owned files reconciled and verified.`,
+          project: node.project,
+          changeType: 'contract_reconciled',
+          fieldName: summary,
+        });
+
         if (node.producer) {
           try {
             _runProducer(node);

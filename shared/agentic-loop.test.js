@@ -4,6 +4,10 @@ import { startNode, readContract } from './agentic-loop.js';
 const CONTRACT_V1 = { fields: { name: { type: 'string' } } };
 const CONTRACT_V2 = { fields: { name: { type: 'string' }, age: { type: 'number' } } };
 
+const MOCK_PROPOSALS = [
+  { absPath: '/abs/owned.js', displayPath: 'owned.js', original: 'old content', proposed: 'new content' },
+];
+
 function makeNode(overrides = {}) {
   return {
     id: 'test',
@@ -23,7 +27,7 @@ function makeNode(overrides = {}) {
 /**
  * Captures the watcher callbacks so the test can drive change events manually.
  */
-function makeHarness({ contractReads, approval = true, reconcileResult = true } = {}) {
+function makeHarness({ contractReads, approval = true, reconcileResult = true, verifyResult = { success: true, output: '' } } = {}) {
   const captured = {};
   const notifications = [];
   const readContractFn = vi.fn();
@@ -39,6 +43,9 @@ function makeHarness({ contractReads, approval = true, reconcileResult = true } 
     sendNotification: (n) => { notifications.push(n); return Promise.resolve(); },
     readContractFn,
     askApproval: vi.fn().mockResolvedValue(approval),
+    proposeChanges: vi.fn().mockResolvedValue(MOCK_PROPOSALS),
+    applyProposals: vi.fn(),
+    runVerify: vi.fn().mockResolvedValue(verifyResult),
     reconcileNode: vi.fn().mockResolvedValue(reconcileResult),
     runProducer: vi.fn(),
   };
@@ -62,7 +69,7 @@ describe('readContract', () => {
 describe('startNode', () => {
   let harness;
 
-  it('detects a real change, prompts, reconciles, and runs the producer', async () => {
+  it('proposes changes, shows diff, asks approval, applies, verifies, and runs the producer', async () => {
     harness = makeHarness({
       contractReads: [
         { data: CONTRACT_V1, parseError: false }, // initial cache
@@ -74,8 +81,10 @@ describe('startNode', () => {
 
     await harness.captured.onChange();
 
+    expect(harness.deps.proposeChanges).toHaveBeenCalledWith(node, CONTRACT_V1, CONTRACT_V2);
     expect(harness.deps.askApproval).toHaveBeenCalledTimes(1);
-    expect(harness.deps.reconcileNode).toHaveBeenCalledWith(node, CONTRACT_V1, CONTRACT_V2);
+    expect(harness.deps.applyProposals).toHaveBeenCalledWith(MOCK_PROPOSALS);
+    expect(harness.deps.runVerify).toHaveBeenCalledWith(node.verify);
     expect(harness.deps.runProducer).toHaveBeenCalledWith(node);
     expect(harness.notifications.some((n) => n.title.includes('Change Detected'))).toBe(true);
   });
@@ -92,10 +101,10 @@ describe('startNode', () => {
     await harness.captured.onChange();
 
     expect(harness.deps.askApproval).not.toHaveBeenCalled();
-    expect(harness.deps.reconcileNode).not.toHaveBeenCalled();
+    expect(harness.deps.proposeChanges).not.toHaveBeenCalled();
   });
 
-  it('notifies a parse error and does not reconcile', async () => {
+  it('notifies a parse error and does not propose', async () => {
     harness = makeHarness({
       contractReads: [
         { data: CONTRACT_V1, parseError: false },
@@ -107,10 +116,10 @@ describe('startNode', () => {
     await harness.captured.onChange();
 
     expect(harness.notifications.at(-1).title).toContain('Parse Error');
-    expect(harness.deps.reconcileNode).not.toHaveBeenCalled();
+    expect(harness.deps.proposeChanges).not.toHaveBeenCalled();
   });
 
-  it('skips reconcile when the developer rejects', async () => {
+  it('skips applying when the developer rejects the diff', async () => {
     harness = makeHarness({
       contractReads: [
         { data: CONTRACT_V1, parseError: false },
@@ -122,8 +131,10 @@ describe('startNode', () => {
 
     await harness.captured.onChange();
 
+    expect(harness.deps.proposeChanges).toHaveBeenCalled();
     expect(harness.deps.askApproval).toHaveBeenCalledTimes(1);
-    expect(harness.deps.reconcileNode).not.toHaveBeenCalled();
+    expect(harness.deps.applyProposals).not.toHaveBeenCalled();
+    expect(harness.deps.runVerify).not.toHaveBeenCalled();
   });
 
   it('does not run the producer when the node has none', async () => {
@@ -137,19 +148,19 @@ describe('startNode', () => {
 
     await harness.captured.onChange();
 
-    expect(harness.deps.reconcileNode).toHaveBeenCalled();
+    expect(harness.deps.applyProposals).toHaveBeenCalled();
+    expect(harness.deps.runVerify).toHaveBeenCalled();
     expect(harness.deps.runProducer).not.toHaveBeenCalled();
   });
 
   it('does not fire a second prompt while one is pending', async () => {
-    // askApproval hangs until we release it, so the first cycle stays "pending".
     let releaseApproval;
     const approvalPromise = new Promise((resolve) => { releaseApproval = resolve; });
 
     const readContractFn = vi.fn()
-      .mockReturnValueOnce({ data: CONTRACT_V1, parseError: false }) // initial cache
-      .mockReturnValueOnce({ data: CONTRACT_V2, parseError: false }) // first change
-      .mockReturnValueOnce({ data: CONTRACT_V1, parseError: false }); // second change (mid-prompt)
+      .mockReturnValueOnce({ data: CONTRACT_V1, parseError: false })
+      .mockReturnValueOnce({ data: CONTRACT_V2, parseError: false })
+      .mockReturnValueOnce({ data: CONTRACT_V1, parseError: false });
 
     const captured = {};
     const notifications = [];
@@ -157,6 +168,9 @@ describe('startNode', () => {
       createFileWatcher: (path, opts) => { captured.onChange = opts.onChange; return { close: vi.fn() }; },
       sendNotification: (n) => { notifications.push(n); return Promise.resolve(); },
       readContractFn,
+      proposeChanges: vi.fn().mockResolvedValue(MOCK_PROPOSALS),
+      applyProposals: vi.fn(),
+      runVerify: vi.fn().mockResolvedValue({ success: true, output: '' }),
       askApproval: vi.fn().mockReturnValue(approvalPromise),
       reconcileNode: vi.fn().mockResolvedValue(true),
       runProducer: vi.fn(),
@@ -165,8 +179,8 @@ describe('startNode', () => {
     const node = makeNode();
     const handle = startNode(node, deps);
 
-    const first = captured.onChange();   // enters pending, awaits approval
-    await captured.onChange();           // arrives mid-prompt — must not prompt again
+    const first = captured.onChange();
+    await captured.onChange();
 
     expect(deps.askApproval).toHaveBeenCalledTimes(1);
     expect(handle.isPromptPending()).toBe(true);
@@ -174,8 +188,26 @@ describe('startNode', () => {
     releaseApproval(true);
     await first;
 
-    // Reconcile ran against the latest cached contract folded in during the pending window.
-    expect(deps.reconcileNode).toHaveBeenCalledTimes(1);
+    expect(deps.applyProposals).toHaveBeenCalledTimes(1);
     expect(handle.isPromptPending()).toBe(false);
+  });
+
+  it('retries with reconcileNode when initial verification fails', async () => {
+    harness = makeHarness({
+      contractReads: [
+        { data: CONTRACT_V1, parseError: false },
+        { data: CONTRACT_V2, parseError: false },
+      ],
+      verifyResult: { success: false, output: 'test failed' },
+      reconcileResult: true,
+    });
+    startNode(makeNode(), harness.deps);
+
+    await harness.captured.onChange();
+
+    expect(harness.deps.applyProposals).toHaveBeenCalled();
+    expect(harness.deps.runVerify).toHaveBeenCalled();
+    // Falls back to full reconcileNode on verify failure
+    expect(harness.deps.reconcileNode).toHaveBeenCalled();
   });
 });

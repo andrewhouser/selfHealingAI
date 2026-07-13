@@ -5,6 +5,7 @@ const { findAll, findById } = require('../../database-project/db');
 /**
  * GET /persons
  * Returns all Person_Record entities as a JSON array.
+ * Person_Record fields: name, email, address, phone_number
  */
 router.get('/', async (req, res) => {
   try {
@@ -18,6 +19,7 @@ router.get('/', async (req, res) => {
 /**
  * GET /persons/:id
  * Returns a single Person_Record by _id, or 404 if not found.
+ * Person_Record fields: name, email, address, phone_number
  */
 router.get('/:id', async (req, res) => {
   try {

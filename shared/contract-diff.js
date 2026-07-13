@@ -4,8 +4,7 @@
  * Generic contract diff.
  *
  * Compares two contract documents at a configured path and reports which fields
- * were added, removed, or modified. Unlike the old diff-schema.js, this is not
- * tied to a specific document shape (schema vs. swagger) — the caller supplies
+ * were added, removed, or modified. The caller supplies
  * the path to the field-set object, so any JSON contract works.
  *
  * The reconcile loop does NOT consume this diff (it receives the whole before/after
