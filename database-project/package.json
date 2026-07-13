@@ -1,0 +1,16 @@
+{
+  "name": "database-project",
+  "version": "1.0.0",
+  "private": true,
+  "description": "No-SQL database project storing person information",
+  "main": "db.js",
+  "scripts": {
+    "seed": "node seed.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "license": "ISC",
+  "dependencies": {
+    "nedb-promises": "^6.2.3"
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "name": "agentic-api-contract-demo",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Demonstration of AI-driven agentic loops managing API contracts between three development teams",
+  "workspaces": [
+    "database-project",
+    "api-project",
+    "ui-project",
+    "shared"
+  ],
+  "scripts": {
+    "test": "vitest --run",
+    "demo": "node scripts/start-demo.js",
+    "start": "node scripts/start-demo.js",
+    "start:api": "node api-project/server.js",
+    "start:api-loop": "node api-project/agentic-loop.js",
+    "start:ui-loop": "node ui-project/agentic-loop.js",
+    "add-field": "node scripts/add-field.js",
+    "remove-field": "node scripts/remove-field.js"
+  },
+  "keywords": [],
+  "license": "ISC",
+  "dependencies": {
+    "chokidar": "^5.0.0",
+    "node-notifier": "^10.0.1"
+  },
+  "devDependencies": {
+    "fast-check": "^4.9.0",
+    "vitest": "^4.1.10"
+  }
+}
