@@ -59,6 +59,7 @@ describe('swagger-generator', () => {
 
   it('picks up new fields added to schema.json', () => {
     const schema = JSON.parse(originalSchema);
+    const baseFieldCount = Object.keys(schema.fields).length;
     schema.fields.date_of_birth = { type: 'string', required: false };
     fs.writeFileSync(SCHEMA_PATH, JSON.stringify(schema, null, 2), 'utf-8');
 
@@ -67,7 +68,8 @@ describe('swagger-generator', () => {
 
     const personProps = swagger.components.schemas.Person.properties;
     expect(personProps.date_of_birth).toEqual({ type: 'string' });
-    expect(Object.keys(personProps)).toHaveLength(5);
+    // One more property than whatever the schema started with — no magic count.
+    expect(Object.keys(personProps)).toHaveLength(baseFieldCount + 1);
   });
 
   it('defines correct endpoint parameters for /persons/{id}', () => {

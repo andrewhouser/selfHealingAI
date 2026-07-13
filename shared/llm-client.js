@@ -1,5 +1,8 @@
 'use strict';
 
+require('dotenv').config({ path: require('path').resolve(__dirname, '..', '.env') });
+
+
 /**
  * LLM Client — Calls the MLX-LM server for code generation.
  * Uses OpenAI-compatible chat completions API.
@@ -65,12 +68,27 @@ async function callLLM(systemPrompt, userPrompt, options = {}) {
 
   const startTime = Date.now();
 
-  const response = await fetch(LLM_ENDPOINT, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-    signal: AbortSignal.timeout(60000), // 60 second timeout
-  });
+  let response;
+  try {
+    response = await fetch(LLM_ENDPOINT, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(60000), // 60 second timeout
+    });
+  } catch (err) {
+    const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+    const isConn = /ECONNREFUSED|fetch failed|ENOTFOUND|EAI_AGAIN/i.test(err.message || '');
+    const isTimeout = err.name === 'TimeoutError' || /aborted|timeout/i.test(err.message || '');
+    const hint = isConn
+      ? ` — could not reach the LLM server at ${LLM_ENDPOINT}. Is it running? Set LLM_ENDPOINT in .env if it lives elsewhere.`
+      : isTimeout
+        ? ` — the LLM server at ${LLM_ENDPOINT} did not respond within 60s.`
+        : '';
+    console.error(`[LLM] Request FAILED after ${elapsed}s: ${err.message}${hint}`);
+    writeLog(`RESPONSE ERROR (network) after ${elapsed}s\n${err.message}${hint}`);
+    throw new Error(`LLM request failed: ${err.message}${hint}`);
+  }
 
   const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
 

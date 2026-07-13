@@ -1,4 +1,4 @@
-const notifier = require('node-notifier');
+'use strict';
 
 /**
  * @typedef {Object} NotificationPayload
@@ -36,43 +36,20 @@ function formatMessage(changeType, fieldName) {
 }
 
 /**
- * Sends a macOS notification using node-notifier.
- * Falls back to console output if notification delivery fails.
+ * Logs a notification to the console (OS notifications disabled).
  *
  * @param {NotificationPayload} payload - The notification payload
- * @param {object} [options] - Optional configuration
- * @param {object} [options.notifierInstance] - Custom notifier instance (for testing)
+ * @param {object} [options] - Optional configuration (kept for API compatibility)
  * @returns {Promise<void>}
  */
 function sendNotification(payload, options = {}) {
   const { project, changeType, fieldName } = payload;
-  const notifierInstance = options.notifierInstance || notifier;
 
-  const title = formatTitle(project);
-  const message = formatMessage(changeType, fieldName);
+  const title = payload.title || formatTitle(project);
+  const message = payload.message || formatMessage(changeType, fieldName);
 
-  return new Promise((resolve) => {
-    try {
-      notifierInstance.notify(
-        {
-          title,
-          message,
-          sound: true,
-        },
-        (err) => {
-          if (err) {
-            console.error('[Notification Failed]', err.message || err);
-            console.error('[Intended Notification]', { title, message, project, changeType, fieldName });
-          }
-          resolve();
-        }
-      );
-    } catch (err) {
-      console.error('[Notification Failed]', err.message || err);
-      console.error('[Intended Notification]', { title, message, project, changeType, fieldName });
-      resolve();
-    }
-  });
+  console.log(`[Notify] ${title} — ${message}`);
+  return Promise.resolve();
 }
 
 module.exports = {

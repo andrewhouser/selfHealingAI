@@ -16,6 +16,13 @@ describe('Feature: agentic-api-contract-demo, Property 3: Table component render
   // Generate valid field names: lowercase letter followed by alphanumeric/underscores
   const fieldNameArb = fc.stringMatching(/^[a-z][a-z0-9_]{0,15}$/);
 
+  // PersonTable humanizes column headers for display (snake_case -> words), so a
+  // field named "phone_number" renders as "phone number". Headers must be compared
+  // against the field name run through the same transform. This mapping is injective
+  // over the allowed field charset (field names contain no spaces), so distinct
+  // fields still produce distinct headers.
+  const toHeader = (field: string) => field.replaceAll('_', ' ');
+
   // Generate a non-empty array of unique field names (1-10 fields)
   const fieldSetArb = fc.uniqueArray(fieldNameArb, { minLength: 1, maxLength: 10 });
 
@@ -67,15 +74,16 @@ describe('Feature: agentic-api-contract-demo, Property 3: Table component render
           const headerTexts = Array.from(columnHeaders).map(
             (header) => header.textContent
           );
+          const expectedHeaders = fields.map(toHeader);
 
-          // Every field name appears as a column header
+          // Every field appears as a column header (in its humanized form)
           for (const field of fields) {
-            expect(headerTexts).toContain(field);
+            expect(headerTexts).toContain(toHeader(field));
           }
 
-          // Every column header is a valid field name (no extra headers)
+          // Every column header corresponds to a field (no extra headers)
           for (const text of headerTexts) {
-            expect(fields).toContain(text);
+            expect(expectedHeaders).toContain(text);
           }
         }
       ),

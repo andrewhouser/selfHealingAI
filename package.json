@@ -23,7 +23,7 @@
   "license": "ISC",
   "dependencies": {
     "chokidar": "^5.0.0",
-    "node-notifier": "^10.0.1"
+    "dotenv": "^17.4.2"
   },
   "devDependencies": {
     "fast-check": "^4.9.0",

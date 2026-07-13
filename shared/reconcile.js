@@ -192,6 +192,7 @@ async function reconcileNode(node, oldContract, newContract, deps = {}) {
     } catch (err) {
       // Model call or write failed — revert and bail.
       revertAll(backups, _writeFile);
+      console.error(`[${node.project}] Reconcile attempt ${attempt} errored: ${err.message}`);
       await _sendNotification({
         title: `${node.project}: Reconcile Failed`,
         message: `Reconcile attempt ${attempt} errored: ${err.message}`,
@@ -222,10 +223,12 @@ async function reconcileNode(node, oldContract, newContract, deps = {}) {
     }
 
     verifyError = result.output || '';
+    console.error(`[${node.project}] Verify failed on attempt ${attempt}:\n${verifyError.slice(0, 800)}`);
   }
 
   // Step 3: exhausted attempts — revert to the original content.
   revertAll(backups, _writeFile);
+  console.error(`[${node.project}] Could not converge after ${maxAttempts} attempts; owned files reverted.`);
   await _sendNotification({
     title: `${node.project}: Reconcile Failed`,
     message: `Could not converge after ${maxAttempts} attempts; reverted. Last verify output: ${verifyError.slice(0, 300)}`,
